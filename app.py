@@ -70,7 +70,23 @@ st.title('🌱 성실한 다민이가 될꺼에요!')
 st.caption('작은 실천을 모아 큰 자신감으로 · 우리 가족 퀘스트 통장')
 if 'flash' in st.session_state: st.success(st.session_state.pop('flash'))
 
+if not setting('parent_pin') and not st.session_state.get('setup_page', False):
+    with st.container(border=True):
+        st.subheader('🔐 로그인')
+        st.caption('우리 가족의 작은 도전, 여기서 시작해요!')
+        st.radio('누구인가요?', ['👨‍👩‍👧‍👦 부모님', '🌱 다민', '🌼 동생'], horizontal=True, disabled=True, key='welcome_identity')
+        st.text_input('비밀번호', type='password', disabled=True, placeholder='처음에는 부모님이 계정을 설정해 주세요', key='welcome_password')
+        st.button('🚪 로그인', type='primary', disabled=True, use_container_width=True)
+        st.info('아직 가족 계정이 없습니다. 부모님이 아래 버튼으로 먼저 설정해 주세요.')
+        if st.button('🏡 처음 시작하기', use_container_width=True):
+            st.session_state['setup_page']=True
+            st.rerun()
+    st.stop()
+
 if not setting('parent_pin'):
+    if st.button('← 로그인 화면'):
+        st.session_state.pop('setup_page', None)
+        st.rerun()
     st.info('처음 오셨네요! 부모님이 먼저 가족 계정을 설정해 주세요. 공개 배포 전에 설정을 완료하는 것을 권장합니다.')
     setup_key=secret('SETUP_KEY')
     with st.form('setup'):
@@ -124,11 +140,14 @@ def seed_example_quests(children):
 names=json.loads(setting('children'))
 seed_example_quests(names)
 if 'role' not in st.session_state:
-    st.subheader('🔑 우리 가족 로그인')
-    with st.form('login'):
-        who=st.radio('누구인가요?', ['부모님']+names, horizontal=True)
-        pw=st.text_input('비밀번호',type='password')
-        go=st.form_submit_button('들어가기',type='primary')
+    with st.container(border=True):
+        st.subheader('🔐 로그인')
+        st.caption('우리 가족의 작은 도전, 여기서 시작해요!')
+        with st.form('login'):
+            who=st.radio('누구인가요?', ['부모님']+names, horizontal=True,
+                format_func=lambda n: '👨‍👩‍👧‍👦 부모님' if n=='부모님' else '🌱 '+n)
+            pw=st.text_input('비밀번호',type='password',placeholder='비밀번호를 입력해 주세요')
+            go=st.form_submit_button('🚪 로그인',type='primary',use_container_width=True)
     if go:
         # 세션별 지연: 공개 서비스의 강력한 공격 방어를 대신하지 않습니다.
         import time
