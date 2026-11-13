@@ -9,6 +9,7 @@ import hashlib
 import secrets
 import sqlite3
 import calendar
+import tempfile
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 import streamlit as st
@@ -22,7 +23,13 @@ def today(): return datetime.now(TZ).date()
 def secret(key, default=''):
     try: return st.secrets.get(key, os.environ.get(key, default))
     except Exception: return os.environ.get(key, default)
-DB=secret('DB_PATH','damin.sqlite3')
+# 체험마다 별도 임시 DB를 사용하며 실제 가족 DB는 읽거나 수정하지 않습니다.
+if st.session_state.get('demo_mode'):
+    if 'demo_storage' not in st.session_state:
+        st.session_state['demo_storage']=tempfile.TemporaryDirectory(prefix='damin-demo-')
+    DB=os.path.join(st.session_state['demo_storage'].name,'demo.sqlite3')
+else:
+    DB=secret('DB_PATH','damin.sqlite3')
 def conn():
     c=sqlite3.connect(DB,timeout=30)
     c.row_factory=sqlite3.Row
@@ -61,6 +68,22 @@ def advance_due(d,period):
 def refresh(message):
     st.session_state['flash']=message; st.rerun()
 
+if st.session_state.get('demo_mode') and not setting('parent_pin'):
+    with conn() as c:
+        set_pin(c,'parent_pin',secrets.token_urlsafe(24))
+        set_pin(c,'child_pin',secrets.token_urlsafe(24))
+        put(c,'children',json.dumps(['다민','동생'],ensure_ascii=False))
+        put(c,'period','1주')
+        put(c,'next_due',(today()+timedelta(days=7)).isoformat())
+
+def leave_demo():
+    storage=st.session_state.pop('demo_storage',None)
+    if storage is not None:
+        storage.cleanup()
+    for key in ['demo_mode','role','who','setup_page','flash']:
+        st.session_state.pop(key,None)
+    st.rerun()
+
 st.markdown('''<style>
 .stApp {background:linear-gradient(145deg,#f2faf6,#fffaf1)}
 h1,h2,h3 {color:#245c46} .stButton>button {border-radius:14px;min-height:44px}
@@ -70,45 +93,16 @@ st.title('🌱 성실한 다민이가 될꺼에요!')
 st.caption('작은 실천을 모아 큰 자신감으로 · 우리 가족 퀘스트 통장')
 if 'flash' in st.session_state: st.success(st.session_state.pop('flash'))
 
-if not setting('parent_pin') and not st.session_state.get('setup_page', False):
-    with st.container(border=True):
-        st.subheader('🔐 로그인')
-        st.caption('우리 가족의 작은 도전, 여기서 시작해요!')
-        st.radio('누구인가요?', ['👨‍👩‍👧‍👦 부모님', '🌱 다민', '🌼 동생'], horizontal=True, disabled=True, key='welcome_identity')
-        st.text_input('비밀번호', type='password', disabled=True, placeholder='처음에는 부모님이 계정을 설정해 주세요', key='welcome_password')
-        st.button('🚪 로그인', type='primary', disabled=True, use_container_width=True)
-        st.info('아직 가족 계정이 없습니다. 부모님이 아래 버튼으로 먼저 설정해 주세요.')
-        if st.button('🏡 처음 시작하기', use_container_width=True):
-            st.session_state['setup_page']=True
-            st.rerun()
-    st.stop()
-
-if not setting('parent_pin'):
-    if st.button('← 로그인 화면'):
-        st.session_state.pop('setup_page', None)
+# 첫 화면은 가입·비밀번호 없이 두 가지 시작 버튼만 제공합니다.
+if 'role' not in st.session_state:
+    st.caption('어떤 역할로 시작할까요?')
+    if st.button('🌱 다민, 동생으로 시작',type='primary',use_container_width=True):
+        st.session_state.update(demo_mode=True,role='child',who='다민')
         st.rerun()
-    st.info('처음 오셨네요! 부모님이 먼저 가족 계정을 설정해 주세요. 공개 배포 전에 설정을 완료하는 것을 권장합니다.')
-    setup_key=secret('SETUP_KEY')
-    with st.form('setup'):
-        key=st.text_input('초기 설정 키 (배포 시 SETUP_KEY를 설정했다면 입력)',type='password')
-        p=st.text_input('부모님 비밀번호 (8자 이상)',type='password')
-        p2=st.text_input('부모님 비밀번호 확인',type='password')
-        kids=st.text_input('아이 이름 (쉼표로 구분)',value='다민,동생')
-        child_pin=st.text_input('아이 공용 비밀번호 (4자 이상)',type='password')
-        go=st.form_submit_button('우리 가족 시작하기',type='primary')
-    if go:
-        names=list(dict.fromkeys(x.strip() for x in kids.split(',') if x.strip()))
-        if setup_key and not hmac.compare_digest(key,setup_key): st.error('초기 설정 키가 맞지 않습니다.')
-        elif len(p)<8 or p!=p2 or len(child_pin)<4: st.error('비밀번호 길이와 확인 값을 확인해 주세요.')
-        elif not 1<=len(names)<=6 or any(len(n)>20 for n in names): st.error('이름은 1~6명, 각각 20자 이내로 입력해 주세요.')
-        else:
-            with conn() as c:
-                c.execute('BEGIN IMMEDIATE')
-                if c.execute("SELECT 1 FROM settings WHERE key='parent_pin'").fetchone(): st.error('이미 설정되었습니다. 새로고침해 주세요.')
-                else:
-                    set_pin(c,'parent_pin',p); set_pin(c,'child_pin',child_pin)
-                    put(c,'children',json.dumps(names,ensure_ascii=False)); put(c,'period','1주'); put(c,'next_due',(today()+timedelta(days=7)).isoformat())
-            refresh('가족 설정이 완료되었습니다. 로그인해 주세요!')
+    if st.button('👨‍👩‍👧‍👦 부모님으로 시작',use_container_width=True):
+        st.session_state.update(demo_mode=True,role='parent',who='부모님')
+        st.rerun()
+    st.caption('비밀번호 없는 체험용입니다. 실제 가족 기록과 분리되며, 체험을 종료하면 기록이 삭제됩니다.')
     st.stop()
 
 def seed_example_quests(children):
@@ -139,34 +133,24 @@ def seed_example_quests(children):
 
 names=json.loads(setting('children'))
 seed_example_quests(names)
-if 'role' not in st.session_state:
-    with st.container(border=True):
-        st.subheader('🔐 로그인')
-        st.caption('우리 가족의 작은 도전, 여기서 시작해요!')
-        with st.form('login'):
-            who=st.radio('누구인가요?', ['부모님']+names, horizontal=True,
-                format_func=lambda n: '👨‍👩‍👧‍👦 부모님' if n=='부모님' else '🌱 '+n)
-            pw=st.text_input('비밀번호',type='password',placeholder='비밀번호를 입력해 주세요')
-            go=st.form_submit_button('🚪 로그인',type='primary',use_container_width=True)
-    if go:
-        # 세션별 지연: 공개 서비스의 강력한 공격 방어를 대신하지 않습니다.
-        import time
-        until=st.session_state.get('blocked_until',0)
-        if time.time()<until: st.error('잠시 후 다시 시도해 주세요.')
-        elif check_pin('parent_pin' if who=='부모님' else 'child_pin',pw):
-            st.session_state.update(role='parent' if who=='부모님' else 'child',who=who,tries=0); st.rerun()
-        else:
-            st.session_state['tries']=st.session_state.get('tries',0)+1
-            if st.session_state['tries']>=5: st.session_state['blocked_until']=time.time()+60
-            st.error('비밀번호를 확인해 주세요.')
-    st.caption('아이들은 공용 비밀번호를 사용합니다. 아이 이름 선택은 본인 인증이 아닙니다. 가족 외에는 공유하지 마세요.')
-    st.stop()
+if st.session_state.get('demo_mode'):
+    st.info('🎮 체험 중입니다. 왼쪽 메뉴에서 부모님·아이 역할을 바꿔보세요. 체험 종료 시 체험 기록은 삭제됩니다.')
 parent=st.session_state.role=='parent'; who=st.session_state.who
 with st.sidebar:
     st.header('🏡 우리 가족')
     st.write(f'{who}님, 반가워요!')
     st.caption('부모님 모드' if parent else '아이 모드')
-    if st.button('로그아웃'):
+    if st.session_state.get('demo_mode'):
+        st.info('🎮 체험 모드 · 실제 가족 기록과 분리되어 있습니다.')
+        for label,person in [('👨‍👩‍👧‍👦','부모님'),('🌱','다민'),('🌼','동생')]:
+            if st.button(label, key='demo_role_'+person,help=person+' 역할로 체험',use_container_width=True):
+                st.session_state.update(role='parent' if person=='부모님' else 'child',who=person)
+                st.rerun()
+        if st.button('🏁 체험 종료',use_container_width=True):
+            leave_demo()
+    if st.button('🏠 시작 화면'):
+        if st.session_state.get('demo_mode'):
+            leave_demo()
         for k in ['role','who']: st.session_state.pop(k,None)
         st.rerun()
     st.info('완벽하지 않아도 괜찮아. 오늘 하나만 해보자!')
@@ -306,7 +290,8 @@ with tabs[3 if parent else 2]:
                 st.image(buf.getvalue(),width=220,caption='휴대폰 카메라로 스캔 → 로그인')
                 st.download_button('QR 이미지 다운로드',buf.getvalue(),'family-app-qr.png','image/png')
             else: st.error('올바른 https 주소를 입력해 주세요. 비밀번호를 주소에 넣지 마세요.')
-        st.subheader('🔐 비밀번호 변경')
+        if not st.session_state.get('demo_mode'):
+            st.subheader('🔐 비밀번호 변경')
         with st.container(border=True):
             with st.form('password'):
                 old=st.text_input('현재 부모님 비밀번호',type='password')
@@ -322,7 +307,8 @@ with tabs[3 if parent else 2]:
                             if newp: set_pin(c,'parent_pin',newp)
                             if newc: set_pin(c,'child_pin',newc)
                         refresh('비밀번호를 변경했습니다. 이미 로그인한 다른 세션은 자동 로그아웃되지 않습니다.')
-        st.subheader('💾 데이터 백업·복원 (중요)')
+        if not st.session_state.get('demo_mode'):
+            st.subheader('💾 데이터 백업·복원 (중요)')
         with st.container(border=True):
             st.warning('기본 저장소는 앱 서버의 SQLite 파일입니다. Streamlit Community Cloud에서는 재시작·재배포 시 데이터가 사라질 수 있습니다. GitHub는 실행 중 데이터의 저장소가 아닙니다. 중요한 기록은 자주 백업하고, 장기 운영은 영구 디스크가 있는 서버에서 사용하세요.')
             source=conn(); target=sqlite3.connect(':memory:')
@@ -366,7 +352,8 @@ with tabs[3 if parent else 2]:
                         st.error('복원에 실패했습니다. 이 앱에서 다운로드한 정상 백업인지 확인해 주세요. 현재 데이터는 유지됩니다.')
                     finally: temp.close()
                     if st.session_state.pop('restored',False): refresh('복원 완료! 백업에 저장된 비밀번호로 다시 로그인해 주세요.')
-        st.subheader('🚀 GitHub · Streamlit 배포 안내')
+        if not st.session_state.get('demo_mode'):
+            st.subheader('🚀 GitHub · Streamlit 배포 안내')
         with st.container(border=True):
             st.markdown('''1. GitHub 저장소에 **app.py**와 **requirements.txt**를 올립니다.
 2. Streamlit Community Cloud에서 GitHub 저장소를 연결하고 실행 파일을 **app.py**로 지정합니다.
