@@ -167,7 +167,7 @@ else:
     b.metric('🏅 성공한 퀘스트',f'{count}개')
 st.caption(f"다음 정산일: {setting('next_due')} · 주기: {setting('period')} · 승인된 퀘스트만 적립됩니다.")
 # 메뉴는 간단한 이모지만 표시합니다. 완료 조건과 금액 등 필수 설명은 유지합니다.
-tabs=st.tabs(['🎯','➕','💰','⚙️'] if parent else ['🎯','💰','💡'])
+tabs=st.tabs(['🎯','✅','➕','💰','⚙️'] if parent else ['🎯','💰','💡'])
 with tabs[0]:
     status=st.radio('퀘스트 상태', ['진행 중','승인 대기','성공','취소','전체'], horizontal=True, label_visibility='collapsed', format_func=lambda x: {'진행 중':'🏃','승인 대기':'⏳','성공':'🏆','취소':'🚫','전체':'📋'}[x])
     codes={'진행 중':'open','승인 대기':'submitted','성공':'approved','취소':'cancelled'}
@@ -198,7 +198,25 @@ with tabs[0]:
                             if left==0: c.execute("UPDATE quests SET status='submitted',submitted=? WHERE id=?",(now(),q['id']))
                     refresh('완료를 기록했어요! 팀 퀘스트는 모두 완료하면 부모님께 승인 요청됩니다.')
                 elif me['done']: st.caption('내 역할은 완료! 팀원의 완료를 기다려 주세요.')
-            if parent and q['status']=='submitted':
+            if parent and q['status'] in ['open','submitted']:
+                if st.checkbox('취소 확인',key=f'cancelcheck{q["id"]}') and st.button('이 퀘스트 취소',key=f'cancel{q["id"]}'):
+                    with conn() as c: c.execute("UPDATE quests SET status='cancelled' WHERE id=? AND status IN ('open','submitted')",(q['id'],))
+                    refresh('퀘스트를 취소했습니다. 적립금은 발생하지 않습니다.')
+
+if parent:
+    with tabs[1]:
+        st.subheader('✅ 승인 대기함')
+        st.caption('아이가 완료한 퀘스트를 확인하고 승인해 주세요. 승인한 뒤에만 용돈이 적립됩니다.')
+        pending=query("SELECT * FROM quests WHERE status='submitted' ORDER BY submitted,id")
+        if not pending:
+            st.info('아직 승인할 퀘스트가 없어요. 아이 모드에서 완료한 뒤 이곳에서 확인해 주세요. 팀 퀘스트는 모두 완료해야 표시됩니다.')
+        for q in pending:
+            with st.container(border=True):
+                st.subheader(q['title'])
+                st.write(q['description'])
+                members=query('SELECT * FROM members WHERE quest_id=?',(q['id'],))
+                for m in members:
+                    st.write(f"✅ {m['name']} · {money(m['reward'])}")
                 note=st.text_input('칭찬 또는 다시 도전할 내용',key=f'note{q["id"]}',max_chars=500)
                 a,b=st.columns(2)
                 if a.button('✅ 승인하고 적립',key=f'approve{q["id"]}',type='primary'):
@@ -214,13 +232,9 @@ with tabs[0]:
                         cur=c.execute("UPDATE quests SET status='open',note=?,submitted=NULL WHERE id=? AND status='submitted'",(note,q['id']))
                         if cur.rowcount: c.execute('UPDATE members SET done=0 WHERE quest_id=?',(q['id'],))
                     refresh('다시 도전할 수 있도록 돌려보냈어요.')
-            if parent and q['status'] in ['open','submitted']:
-                if st.checkbox('취소 확인',key=f'cancelcheck{q["id"]}') and st.button('이 퀘스트 취소',key=f'cancel{q["id"]}'):
-                    with conn() as c: c.execute("UPDATE quests SET status='cancelled' WHERE id=? AND status IN ('open','submitted')",(q['id'],))
-                    refresh('퀘스트를 취소했습니다. 적립금은 발생하지 않습니다.')
 
 if parent:
-    with tabs[1]:
+    with tabs[2]:
         st.subheader('작은 행동을 구체적인 퀘스트로!')
         st.caption('예: 방 청소 2,000원 · 동생과 장보기 · 함께 공부 1시간. 보상은 각자 받는 금액입니다.')
         with st.form('newquest',clear_on_submit=True):
@@ -241,7 +255,7 @@ if parent:
                     c.executemany('INSERT INTO members(quest_id,name,reward) VALUES(?,?,?)',[(cur.lastrowid,n,rewards[n]) for n in selected])
                 refresh('새 퀘스트가 생겼어요!')
 
-with tabs[2 if parent else 1]:
+with tabs[3 if parent else 1]:
     st.subheader('💰 승인된 용돈 기록')
     rows=query('SELECT l.id,q.title AS 퀘스트,l.name AS 이름,l.amount AS 적립금,l.earned AS 승인일,CASE WHEN l.payout_id IS NULL THEN \'미정산\' ELSE \'지급 완료\' END AS 상태,l.payout_id AS 정산번호 FROM ledger l JOIN quests q ON q.id=l.quest_id'+('' if parent else ' WHERE l.name=?')+' ORDER BY l.id DESC',() if parent else (who,))
     if rows:
@@ -270,7 +284,7 @@ with tabs[2 if parent else 1]:
         history=query('SELECT id AS 정산번호,paid_at AS 지급일,total AS 지급합계 FROM payouts ORDER BY id DESC')
         if history: st.dataframe(pd.DataFrame(history),hide_index=True,use_container_width=True)
 
-with tabs[3 if parent else 2]:
+with tabs[4 if parent else 2]:
     if parent:
         st.subheader('📆 정산 주기')
         with st.form('schedule'):
