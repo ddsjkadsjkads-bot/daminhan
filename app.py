@@ -126,7 +126,7 @@ seed_example_quests(names)
 if 'role' not in st.session_state:
     st.subheader('🔑 우리 가족 로그인')
     with st.form('login'):
-        who=st.selectbox('누구인가요?', ['부모님']+names)
+        who=st.radio('누구인가요?', ['부모님']+names, horizontal=True)
         pw=st.text_input('비밀번호',type='password')
         go=st.form_submit_button('들어가기',type='primary')
     if go:
@@ -166,7 +166,7 @@ st.caption(f"다음 정산일: {setting('next_due')} · 주기: {setting('period
 # 메뉴는 간단한 이모지만 표시합니다. 완료 조건과 금액 등 필수 설명은 유지합니다.
 tabs=st.tabs(['🎯','➕','💰','⚙️'] if parent else ['🎯','💰','💡'])
 with tabs[0]:
-    status=st.selectbox('보고 싶은 퀘스트',['진행 중','승인 대기','성공','취소','전체'])
+    status=st.radio('퀘스트 상태', ['진행 중','승인 대기','성공','취소','전체'], horizontal=True, label_visibility='collapsed', format_func=lambda x: {'진행 중':'🏃','승인 대기':'⏳','성공':'🏆','취소':'🚫','전체':'📋'}[x])
     codes={'진행 중':'open','승인 대기':'submitted','성공':'approved','취소':'cancelled'}
     sql='SELECT DISTINCT q.* FROM quests q JOIN members m ON m.quest_id=q.id WHERE 1=1'; args=[]
     if not parent: sql+=' AND m.name=?'; args.append(who)
@@ -223,7 +223,8 @@ if parent:
         with st.form('newquest',clear_on_submit=True):
             title=st.text_input('퀘스트 이름',max_chars=80,placeholder='예: 방 바닥 정리하고 책상 닦기')
             desc=st.text_area('완료 조건',max_chars=1500,placeholder='예: 바닥의 물건을 제자리에 놓고, 책상 위를 닦으면 성공!')
-            selected=st.multiselect('함께할 아이 (2명 이상이면 팀 퀘스트)',names,default=names[:1])
+            st.caption('함께할 아이 · 2명 이상이면 팀 퀘스트')
+            selected=[n for i,n in enumerate(names) if st.checkbox(n,value=(i==0),key=f'participant_{i}')]
             # 폼 내부 선택은 제출 전 재실행되지 않으므로 보상 입력은 모든 아이에게 제공합니다.
             rewards={n:st.number_input(f'{n} 보상 (선택된 아이만 적용)',min_value=0,max_value=1000000,value=2000,step=500,key=f'reward{n}') for n in names}
             use_due=st.checkbox('마감일 사용',value=False)
@@ -270,7 +271,7 @@ with tabs[3 if parent else 2]:
     if parent:
         st.subheader('📆 정산 주기')
         with st.form('schedule'):
-            period=st.selectbox('주기',['1주','2주','1개월'],index=['1주','2주','1개월'].index(setting('period')))
+            period=st.radio('주기',['1주','2주','1개월'],index=['1주','2주','1개월'].index(setting('period')),horizontal=True)
             due=st.date_input('다음 정산일',value=date.fromisoformat(setting('next_due')))
             if st.form_submit_button('정산 일정 저장'):
                 with conn() as c: put(c,'period',period); put(c,'next_due',due.isoformat())
@@ -286,7 +287,8 @@ with tabs[3 if parent else 2]:
                 st.image(buf.getvalue(),width=220,caption='휴대폰 카메라로 스캔 → 로그인')
                 st.download_button('QR 이미지 다운로드',buf.getvalue(),'family-app-qr.png','image/png')
             else: st.error('올바른 https 주소를 입력해 주세요. 비밀번호를 주소에 넣지 마세요.')
-        with st.expander('🔐 비밀번호 변경'):
+        st.subheader('🔐 비밀번호 변경')
+        with st.container(border=True):
             with st.form('password'):
                 old=st.text_input('현재 부모님 비밀번호',type='password')
                 newp=st.text_input('새 부모님 비밀번호 (변경 시 8자 이상)',type='password')
@@ -301,7 +303,8 @@ with tabs[3 if parent else 2]:
                             if newp: set_pin(c,'parent_pin',newp)
                             if newc: set_pin(c,'child_pin',newc)
                         refresh('비밀번호를 변경했습니다. 이미 로그인한 다른 세션은 자동 로그아웃되지 않습니다.')
-        with st.expander('💾 데이터 백업·복원 (중요)'):
+        st.subheader('💾 데이터 백업·복원 (중요)')
+        with st.container(border=True):
             st.warning('기본 저장소는 앱 서버의 SQLite 파일입니다. Streamlit Community Cloud에서는 재시작·재배포 시 데이터가 사라질 수 있습니다. GitHub는 실행 중 데이터의 저장소가 아닙니다. 중요한 기록은 자주 백업하고, 장기 운영은 영구 디스크가 있는 서버에서 사용하세요.')
             source=conn(); target=sqlite3.connect(':memory:')
             try:
@@ -344,7 +347,8 @@ with tabs[3 if parent else 2]:
                         st.error('복원에 실패했습니다. 이 앱에서 다운로드한 정상 백업인지 확인해 주세요. 현재 데이터는 유지됩니다.')
                     finally: temp.close()
                     if st.session_state.pop('restored',False): refresh('복원 완료! 백업에 저장된 비밀번호로 다시 로그인해 주세요.')
-        with st.expander('🚀 GitHub · Streamlit 배포 안내',expanded=False):
+        st.subheader('🚀 GitHub · Streamlit 배포 안내')
+        with st.container(border=True):
             st.markdown('''1. GitHub 저장소에 **app.py**와 **requirements.txt**를 올립니다.
 2. Streamlit Community Cloud에서 GitHub 저장소를 연결하고 실행 파일을 **app.py**로 지정합니다.
 3. 배포 설정의 Secrets에 아래 값을 넣는 것을 권장합니다. SETUP_KEY는 공개 배포 전 임의의 긴 문자열로 바꾸세요.
